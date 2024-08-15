@@ -168,7 +168,9 @@ struct PlayerField<FieldStateType: Estimatable> {
         case .revealed(let number), .unrevealed(let number):
             tempFields[col][row] = .revealed(card)
             if tempFields[col].allSatisfy({ $0 == .revealed(card) }) {
+                let discarded = tempFields[col].map { $0.estimatedValue }
                 tempFields[col] = tempFields[col].map { _ in .gone }
+                return (.init(fields: tempFields), [number] + discarded)
             }
             return (.init(fields: tempFields), [number])
         }
@@ -189,11 +191,37 @@ struct PlayerField<FieldStateType: Estimatable> {
 
 struct GameState: CustomDebugStringConvertible {
     let middleCard: Int
+    let offStack: [Int]
     let stack: [Int]
     let fields: [PlayerField<FieldState>]
+    let endsAt: Int?
+    
+    var scores: [Int:Int] {
+        var scores = Dictionary(uniqueKeysWithValues: fields.enumerated().map { index, field in
+            return (index, field.sum())
+        })
+        
+        if let endsAt = endsAt,
+           let minimumScore = scores.filter({ $0.key != endsAt }).values.min(),
+           let score = scores[endsAt],
+           score >= minimumScore {
+            scores[endsAt] = 2 * score
+            debugPrint("end player has lost")
+        }
+        
+        return scores
+    }
+    
+    func hasEnded(at playerId: Int) -> Bool {
+        endsAt == playerId
+    }
     
     func validMoves(for playerId: Int) -> [GameMove] {
-        return [.noMove, .end] + PlayerField<FieldState>.fieldTuples.flatMap { row, col in
+        if endsAt == playerId {
+            return []
+        }
+        
+        return [.end] + PlayerField<FieldState>.fieldTuples.flatMap { row, col in
             let base: [GameMove] = [.drawTo(col: col, row: row), .swapMiddle(col: col, row: row)]
             guard case .unrevealed(_) = fields[playerId].fields[col][row] else {
                 return base
@@ -201,6 +229,16 @@ struct GameState: CustomDebugStringConvertible {
             
             return base + [.reveal(col: col, row: row)]
         }
+    }
+    
+    func refillStackIfNeeded() -> (newStack: [Int], newOffStack: [Int]) {
+        guard stack.isEmpty else {
+            return (stack, offStack)
+        }
+        
+        debugPrint("refill event")
+        
+        return (offStack.shuffled(), [])
     }
     
     func applying(move: GameMove, playerId: Int) -> GameState {
@@ -212,43 +250,65 @@ struct GameState: CustomDebugStringConvertible {
             tempFields[playerId] = newField
             return .init(
                 middleCard: middleCard,
+                offStack: offStack,
                 stack: stack,
-                fields: tempFields
+                fields: tempFields,
+                endsAt: endsAt
             )
             
         case .swapMiddle(let col, let row):
-            let (newField, discardedCards) = field.swapInto(col: col, row: row, card: middleCard)
+            var (newField, discardedCards) = field.swapInto(col: col, row: row, card: middleCard)
             var tempFields = fields
             tempFields[playerId] = newField
+            let middleCard = discardedCards.removeLast()
+            let newOffStack = offStack + discardedCards
             return .init(
-                middleCard: discardedCards.last!,
+                middleCard: middleCard,
+                offStack: newOffStack,
                 stack: stack,
-                fields: tempFields
+                fields: tempFields,
+                endsAt: endsAt
             )
             
         case .drawTo(let col, let row):
-            var currentStack = stack
+            var (currentStack, currentOffStack) = refillStackIfNeeded()
             let drawnCard = currentStack.removeLast()
-            let (newField, _) = field.swapInto(col: col, row: row, card: drawnCard)
+            var (newField, discarded) = field.swapInto(col: col, row: row, card: drawnCard)
             var tempFields = fields
             tempFields[playerId] = newField
+            
+            let newMiddleCard = discarded.removeLast()
+            
             return .init(
-                middleCard: middleCard,
+                middleCard: newMiddleCard,
+                offStack: currentOffStack + discarded,
                 stack: currentStack,
-                fields: tempFields
+                fields: tempFields,
+                endsAt: endsAt
             )
         
-        case .end: fatalError("handle earlier")
-        case .noMove:
-            debugPrint("no move was made")
-            return self
+        case .end:
+            guard endsAt == nil else {
+                fatalError("only one can finish")
+            }
+            
+            debugPrint("player \(playerId) ended")
+            
+            return .init(
+                middleCard: middleCard,
+                offStack: offStack,
+                stack: stack,
+                fields: fields,
+                endsAt: playerId
+            )
         }
     }
     
     func redacted() -> RedactedGameState {
         .init(
             middleCard: middleCard,
-            fields: fields.map { $0.redacted() }
+            fields: fields.map { $0.redacted() },
+            endsAt: endsAt
         )
     }
     
@@ -266,6 +326,15 @@ struct GameState: CustomDebugStringConvertible {
 struct RedactedGameState: CustomDebugStringConvertible {
     let middleCard: Int
     let fields: [PlayerField<RedactedFieldState>]
+    let endsAt: Int?
+    
+    var playerHasEnded: Bool {
+        endsAt != nil
+    }
+    
+    func hasEnded(at playerId: Int) -> Bool {
+        endsAt == playerId
+    }
     
     var debugDescription: String {
         var s = "middleCard: \(middleCard)\n"
@@ -277,7 +346,13 @@ struct RedactedGameState: CustomDebugStringConvertible {
     }
     
     func validMoves(for playerId: Int) -> [GameMove] {
-        return [.noMove, .end] + PlayerField<FieldState>.fieldTuples.flatMap { row, col in
+        if hasEnded(at: playerId) {
+            return []
+        }
+        
+        let canEndMoves: [GameMove] = !playerHasEnded ? [.end] : []
+        
+        return canEndMoves + PlayerField<FieldState>.fieldTuples.flatMap { row, col in
             let base: [GameMove] = [.drawTo(col: col, row: row), .swapMiddle(col: col, row: row)]
             guard case .unrevealed = fields[playerId].fields[col][row] else {
                 return base
@@ -300,7 +375,6 @@ enum GameMove: Equatable {
     case swapMiddle(col: Int, row: Int)
     case drawTo(col: Int, row: Int)
     case end
-    case noMove
 }
 
 open class PlayerStrategy {
@@ -325,7 +399,6 @@ final class GameLoop {
     var currentGameState: GameState
     let players: [PlayerStrategy]
     var currentPlayer: Int = 0
-    var endsAt: Int?
     
     init(players: [PlayerStrategy]) {
         self.players = players
@@ -340,11 +413,13 @@ final class GameLoop {
         
         self.currentGameState = .init(
             middleCard: middleCard,
+            offStack: [],
             stack: shuffledCards,
-            fields: fields
+            fields: fields,
+            endsAt: nil
         )
     }
-    
+
     func initialize() {
         var shuffledCards = cards.shuffled()
         let middleCard = shuffledCards.popLast()!
@@ -354,8 +429,10 @@ final class GameLoop {
         
         self.currentGameState = .init(
             middleCard: middleCard,
+            offStack: [],
             stack: shuffledCards,
-            fields: fields
+            fields: fields,
+            endsAt: nil
         )
     }
     
@@ -364,15 +441,14 @@ final class GameLoop {
             currentPlayer = (currentPlayer + 1) % players.count
         }
         
+        if currentGameState.hasEnded(at: currentPlayer) {
+            debugPrint("game ended")
+            return
+        }
+        
         let strategy = players[currentPlayer]
         
         let move = strategy.decision(state: currentGameState.redacted(), ownPlayerId: currentPlayer)
-        
-        if move == .end {
-            guard endsAt == nil else { fatalError("only one can finish") }
-            endsAt = currentPlayer
-            return
-        }
         
         currentGameState = currentGameState.applying(move: move, playerId: currentPlayer)
     }
@@ -380,26 +456,14 @@ final class GameLoop {
     func run() -> [Int:Int] {
         initialize()
         while true {
-            if let endsAt, currentPlayer == endsAt {
+            if currentGameState.hasEnded(at: currentPlayer) {
                 break
             }
             
             step()
         }
         
-        var scores = Dictionary(uniqueKeysWithValues: currentGameState.fields.enumerated().map { index, field in
-            return (index, field.sum())
-        })
-        
-        if let endsAt,
-           let minimumScore = scores.filter({ $0.key != endsAt }).values.min(),
-           let score = scores[endsAt],
-           score >= minimumScore {
-            scores[endsAt] = 2 * score
-            print("end player has lost")
-        }
-
-        return scores
+        return currentGameState.scores
     }
     
     func playerWon(scores: [Int:Int]) -> Int {
@@ -536,16 +600,16 @@ class MutatablePlayer: PlayerStrategy {
         
         let y = result.mapEach(sigmoid)
         
-        let actionId = Int(y[0, 0] * 5)
+        let actionId = Int(y[0, 0] * 4)
         let col = Int(y[1, 0] * 4)
         let row = Int(y[2, 0] * 3)
         
         let move: GameMove = switch actionId {
-        case 1: .end
-        case 2: .drawTo(col: col, row: row)
-        case 3: .reveal(col: col, row: row)
-        case 4: .swapMiddle(col: col, row: row)
-        default: .noMove
+        case 0: .end
+        case 1: .drawTo(col: col, row: row)
+        case 2: .reveal(col: col, row: row)
+        case 3: .swapMiddle(col: col, row: row)
+        default: preconditionFailure("switch should be exhaustive because of sigmoid properties")
         }
         
         let validMoves = state.validMoves(for: playerId)
