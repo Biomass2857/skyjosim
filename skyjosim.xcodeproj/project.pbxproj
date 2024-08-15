@@ -8,6 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		E68A31562C68F92C00F269E0 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = E68A31552C68F92C00F269E0 /* main.swift */; };
+		E68A31602C6BFB1C00F269E0 /* Matrix.swift in Sources */ = {isa = PBXBuildFile; fileRef = E68A315F2C6BFB1C00F269E0 /* Matrix.swift */; };
+		E68A31622C6BFB3900F269E0 /* DMatrix.swift in Sources */ = {isa = PBXBuildFile; fileRef = E68A31612C6BFB3900F269E0 /* DMatrix.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -25,6 +27,8 @@
 /* Begin PBXFileReference section */
 		E68A31522C68F92C00F269E0 /* skyjosim */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = skyjosim; sourceTree = BUILT_PRODUCTS_DIR; };
 		E68A31552C68F92C00F269E0 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		E68A315F2C6BFB1C00F269E0 /* Matrix.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Matrix.swift; sourceTree = "<group>"; };
+		E68A31612C6BFB3900F269E0 /* DMatrix.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DMatrix.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -57,9 +61,19 @@
 		E68A31542C68F92C00F269E0 /* skyjosim */ = {
 			isa = PBXGroup;
 			children = (
+				E68A315E2C6BFB0C00F269E0 /* github_fast_matrix */,
 				E68A31552C68F92C00F269E0 /* main.swift */,
 			);
 			path = skyjosim;
+			sourceTree = "<group>";
+		};
+		E68A315E2C6BFB0C00F269E0 /* github_fast_matrix */ = {
+			isa = PBXGroup;
+			children = (
+				E68A315F2C6BFB1C00F269E0 /* Matrix.swift */,
+				E68A31612C6BFB3900F269E0 /* DMatrix.swift */,
+			);
+			path = github_fast_matrix;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -120,7 +134,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E68A31622C6BFB3900F269E0 /* DMatrix.swift in Sources */,
 				E68A31562C68F92C00F269E0 /* main.swift in Sources */,
+				E68A31602C6BFB1C00F269E0 /* Matrix.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
