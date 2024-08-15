@@ -90,7 +90,7 @@ struct Matrix<T> : CustomStringConvertible, ExpressibleByArrayLiteral {
     
     func map<S>( _ mapper: (Int, Int, T) -> S ) -> Matrix<S> {
         var newValues : [S] = []
-        for (i,v) in values.enumerated() {
+        for (i,v) in values.correctEnum() {
             let (row, col) = ( i/self.cols, i%self.cols )
             newValues.append(mapper(row, col, v))
         }
@@ -102,7 +102,7 @@ struct Matrix<T> : CustomStringConvertible, ExpressibleByArrayLiteral {
         
         var newValues : [S] = []
         newValues.reserveCapacity(values.count)
-        for (i,v) in values.enumerated() {
+        for (i,v) in values.correctEnum() {
             let (row, col) = ( i/self.cols, i%self.cols )
             newValues.append( mapper(v, on[row,col]) )
         }
@@ -189,3 +189,5 @@ extension Matrix where T : Comparable {
         return ( max: max, row: maxAt / self.cols, col: maxAt % self.cols )
     }
 }
+
+extension Matrix: Codable where T: Codable {}

@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		E645B1242C6EA254001486B3 /* correctEnumerated.swift in Sources */ = {isa = PBXBuildFile; fileRef = E645B1232C6EA254001486B3 /* correctEnumerated.swift */; };
 		E68A31562C68F92C00F269E0 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = E68A31552C68F92C00F269E0 /* main.swift */; };
 		E68A31602C6BFB1C00F269E0 /* Matrix.swift in Sources */ = {isa = PBXBuildFile; fileRef = E68A315F2C6BFB1C00F269E0 /* Matrix.swift */; };
 		E68A31622C6BFB3900F269E0 /* DMatrix.swift in Sources */ = {isa = PBXBuildFile; fileRef = E68A31612C6BFB3900F269E0 /* DMatrix.swift */; };
@@ -25,6 +26,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		E645B1232C6EA254001486B3 /* correctEnumerated.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = correctEnumerated.swift; sourceTree = "<group>"; };
 		E68A31522C68F92C00F269E0 /* skyjosim */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = skyjosim; sourceTree = BUILT_PRODUCTS_DIR; };
 		E68A31552C68F92C00F269E0 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		E68A315F2C6BFB1C00F269E0 /* Matrix.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Matrix.swift; sourceTree = "<group>"; };
@@ -63,6 +65,7 @@
 			children = (
 				E68A315E2C6BFB0C00F269E0 /* github_fast_matrix */,
 				E68A31552C68F92C00F269E0 /* main.swift */,
+				E645B1232C6EA254001486B3 /* correctEnumerated.swift */,
 			);
 			path = skyjosim;
 			sourceTree = "<group>";
@@ -136,6 +139,7 @@
 			files = (
 				E68A31622C6BFB3900F269E0 /* DMatrix.swift in Sources */,
 				E68A31562C68F92C00F269E0 /* main.swift in Sources */,
+				E645B1242C6EA254001486B3 /* correctEnumerated.swift in Sources */,
 				E68A31602C6BFB1C00F269E0 /* Matrix.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

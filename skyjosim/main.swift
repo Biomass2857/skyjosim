@@ -1,5 +1,5 @@
 import Foundation
-import simd
+import Dispatch
 
 let oneToTwelve: [Int] = [Int](1...12).flatMap { number in return [Int](repeating: number, count: 10) }
 let cards: [Int] = [Int](repeating: -2, count: 5) + [Int](repeating: -1, count: 10) + [Int](repeating: 0, count: 15)
@@ -147,7 +147,7 @@ struct PlayerField<FieldStateType: Estimatable> {
         Array(0...3).flatMap { col in Array(0...2).map { row in (row, col) } }
     }
     
-    func reveal(col: Int, row: Int) -> Self where FieldStateType == FieldState {
+    func reveal(col: Int, row: Int) -> (Self, [Int]) where FieldStateType == FieldState {
         guard case .unrevealed(let number) = fields[col][row] else {
             fatalError("wrong move")
         }
@@ -156,9 +156,11 @@ struct PlayerField<FieldStateType: Estimatable> {
         tempFields[col][row] = .revealed(number)
         if tempFields[col].allSatisfy({ $0 == .revealed(number) }) {
             tempFields[col] = tempFields[col].map { _ in .gone }
+            let discarded = tempFields[col].map { _ in number }
+            return (PlayerField(fields: tempFields), discarded)
         }
         
-        return PlayerField(fields: tempFields)
+        return (PlayerField(fields: tempFields), [])
     }
     
     func swapInto(col: Int, row: Int, card: Int) -> (Self, [Int]) where FieldStateType == FieldState {
@@ -168,8 +170,8 @@ struct PlayerField<FieldStateType: Estimatable> {
         case .revealed(let number), .unrevealed(let number):
             tempFields[col][row] = .revealed(card)
             if tempFields[col].allSatisfy({ $0 == .revealed(card) }) {
-                let discarded = tempFields[col].map { $0.estimatedValue }
                 tempFields[col] = tempFields[col].map { _ in .gone }
+                let discarded = tempFields[col].map { _ in card }
                 return (.init(fields: tempFields), [number] + discarded)
             }
             return (.init(fields: tempFields), [number])
@@ -196,8 +198,12 @@ struct GameState: CustomDebugStringConvertible {
     let fields: [PlayerField<FieldState>]
     let endsAt: Int?
     
+    var playerHasEnded: Bool {
+        endsAt != nil
+    }
+    
     var scores: [Int:Int] {
-        var scores = Dictionary(uniqueKeysWithValues: fields.enumerated().map { index, field in
+        var scores = Dictionary(uniqueKeysWithValues: fields.correctEnum().map { index, field in
             return (index, field.sum())
         })
         
@@ -206,7 +212,6 @@ struct GameState: CustomDebugStringConvertible {
            let score = scores[endsAt],
            score >= minimumScore {
             scores[endsAt] = 2 * score
-            debugPrint("end player has lost")
         }
         
         return scores
@@ -221,13 +226,14 @@ struct GameState: CustomDebugStringConvertible {
             return []
         }
         
-        return [.end] + PlayerField<FieldState>.fieldTuples.flatMap { row, col in
-            let base: [GameMove] = [.drawTo(col: col, row: row), .swapMiddle(col: col, row: row)]
-            guard case .unrevealed(_) = fields[playerId].fields[col][row] else {
-                return base
+        let canEndMoves: [GameMove] = !playerHasEnded ? [.end] : []
+        
+        return canEndMoves + PlayerField<FieldState>.fieldTuples.flatMap { row, col -> [GameMove] in
+            return switch fields[playerId].fields[col][row] {
+            case .gone: []
+            case .unrevealed(_): [.drawTo(col: col, row: row), .swapMiddle(col: col, row: row), .reveal(col: col, row: row)]
+            case .revealed(_): [.drawTo(col: col, row: row), .swapMiddle(col: col, row: row)]
             }
-            
-            return base + [.reveal(col: col, row: row)]
         }
     }
     
@@ -236,8 +242,6 @@ struct GameState: CustomDebugStringConvertible {
             return (stack, offStack)
         }
         
-        debugPrint("refill event")
-        
         return (offStack.shuffled(), [])
     }
     
@@ -245,12 +249,17 @@ struct GameState: CustomDebugStringConvertible {
         let field = fields[playerId]
         switch move {
         case .reveal(let col, let row):
-            let newField = field.reveal(col: col, row: row)
+            var (newField, discarded) = field.reveal(col: col, row: row)
             var tempFields = fields
             tempFields[playerId] = newField
+            
+            let newMiddleCard = discarded.count == 0 ? middleCard : discarded.removeLast()
+            
+            let newOffStack = offStack + discarded
+            
             return .init(
-                middleCard: middleCard,
-                offStack: offStack,
+                middleCard: newMiddleCard,
+                offStack: newOffStack,
                 stack: stack,
                 fields: tempFields,
                 endsAt: endsAt
@@ -260,10 +269,11 @@ struct GameState: CustomDebugStringConvertible {
             var (newField, discardedCards) = field.swapInto(col: col, row: row, card: middleCard)
             var tempFields = fields
             tempFields[playerId] = newField
-            let middleCard = discardedCards.removeLast()
+            let newMiddleCard = discardedCards.removeLast()
             let newOffStack = offStack + discardedCards
+            
             return .init(
-                middleCard: middleCard,
+                middleCard: newMiddleCard,
                 offStack: newOffStack,
                 stack: stack,
                 fields: tempFields,
@@ -278,10 +288,11 @@ struct GameState: CustomDebugStringConvertible {
             tempFields[playerId] = newField
             
             let newMiddleCard = discarded.removeLast()
+            let newOffStack = currentOffStack + [middleCard] + discarded
             
             return .init(
                 middleCard: newMiddleCard,
-                offStack: currentOffStack + discarded,
+                offStack: newOffStack,
                 stack: currentStack,
                 fields: tempFields,
                 endsAt: endsAt
@@ -291,8 +302,6 @@ struct GameState: CustomDebugStringConvertible {
             guard endsAt == nil else {
                 fatalError("only one can finish")
             }
-            
-            debugPrint("player \(playerId) ended")
             
             return .init(
                 middleCard: middleCard,
@@ -315,7 +324,7 @@ struct GameState: CustomDebugStringConvertible {
     var debugDescription: String {
         var s = "middleCard: \(middleCard)\n"
         s += "stack: \(stack)\n"
-        for (index, player) in fields.enumerated() {
+        for (index, player) in fields.correctEnum() {
             s += "player: \(index)\n"
             s += player.debugDescription + "\n"
         }
@@ -338,7 +347,7 @@ struct RedactedGameState: CustomDebugStringConvertible {
     
     var debugDescription: String {
         var s = "middleCard: \(middleCard)\n"
-        for (index, player) in fields.enumerated() {
+        for (index, player) in fields.correctEnum() {
             s += "player: \(index)\n"
             s += player.debugDescription + "\n"
         }
@@ -346,19 +355,18 @@ struct RedactedGameState: CustomDebugStringConvertible {
     }
     
     func validMoves(for playerId: Int) -> [GameMove] {
-        if hasEnded(at: playerId) {
+        if endsAt == playerId {
             return []
         }
         
         let canEndMoves: [GameMove] = !playerHasEnded ? [.end] : []
         
-        return canEndMoves + PlayerField<FieldState>.fieldTuples.flatMap { row, col in
-            let base: [GameMove] = [.drawTo(col: col, row: row), .swapMiddle(col: col, row: row)]
-            guard case .unrevealed = fields[playerId].fields[col][row] else {
-                return base
+        return canEndMoves + PlayerField<FieldState>.fieldTuples.flatMap { row, col -> [GameMove] in
+            return switch fields[playerId].fields[col][row] {
+            case .gone: []
+            case .unrevealed: [.drawTo(col: col, row: row), .swapMiddle(col: col, row: row), .reveal(col: col, row: row)]
+            case .revealed(_): [.drawTo(col: col, row: row), .swapMiddle(col: col, row: row)]
             }
-            
-            return base + [.reveal(col: col, row: row)]
         }
     }
 }
@@ -377,13 +385,12 @@ enum GameMove: Equatable {
     case end
 }
 
-open class PlayerStrategy {
-    func decision(state: RedactedGameState, ownPlayerId: Int) -> GameMove {
-        return .swapMiddle(col: 0, row: 0)
-    }
+protocol PlayerStrategy {
+    func decision(state: RedactedGameState, ownPlayerId: Int) -> GameMove
 }
 
 extension Array {
+    @discardableResult
     mutating func popLast(_ k: Int) -> [Element] {
         var result: Self = []
         for _ in 0..<k {
@@ -466,22 +473,22 @@ final class GameLoop {
         return currentGameState.scores
     }
     
-    func playerWon(scores: [Int:Int]) -> Int {
-        scores.min { tupleA, tupleB in
-            tupleA.1 < tupleB.1
-        }?.0 ?? -1
-    }
-    
-    func evaluate() -> Int {
-        let scores = run()
-        return playerWon(scores: scores)
-    }
+//    func playerWon(scores: [Int:Int]) -> Int {
+//        scores.min { tupleA, tupleB in
+//            tupleA.1 < tupleB.1
+//        }?.0 ?? -1
+//    }
+//    
+//    func evaluate() -> Int {
+//        let scores = run()
+//        return playerWon(scores: scores)
+//    }
 }
 
 class EndPlayer: PlayerStrategy {
     var move = 0
     let max = 12
-    override func decision(state: RedactedGameState, ownPlayerId: Int) -> GameMove {
+    func decision(state: RedactedGameState, ownPlayerId: Int) -> GameMove {
         move += 1
         if move == max {
             return .end
@@ -495,14 +502,14 @@ class EndPlayer: PlayerStrategy {
 
 class SwapPlayer: PlayerStrategy {
     var move = 0
-    override func decision(state: RedactedGameState, ownPlayerId: Int) -> GameMove {
+    func decision(state: RedactedGameState, ownPlayerId: Int) -> GameMove {
         move += 1
         return .swapMiddle(col: 0, row: (move - 1) % 3)
     }
 }
 
 class TomPlayer: PlayerStrategy {
-    override func decision(state: RedactedGameState, ownPlayerId: Int) -> GameMove {
+    func decision(state: RedactedGameState, ownPlayerId: Int) -> GameMove {
         let alertPlayers = playersWithImminentDestruction(state: state, for: state.middleCard)
         
         if !alertPlayers.isEmpty {
@@ -548,7 +555,7 @@ class TomPlayer: PlayerStrategy {
 //    }
 //    
     func playersWithImminentDestruction(state: RedactedGameState, for number: Int) -> [Int] {
-        state.fields.enumerated().filter { (playerId, field) in
+        state.fields.correctEnum().filter { (playerId, field) in
             hasFieldImminentDestruction(for: field, andNumber: number)
         }.map { $0.0 }
     }
@@ -572,29 +579,30 @@ extension DMatrix {
     }
 }
 
-class MutatablePlayer: PlayerStrategy {
+class MutatablePlayer: PlayerStrategy, Codable {
     var layer1: DMatrix
     var layer2: DMatrix
     var layer3: DMatrix
     
-    var moves: [GameMove] = []
-    var randomMoves = 0
-    
-    override init() {
-        self.layer1 = DMatrix(20, 51) { _, _ in Double.random(in: -1...1) }
-        self.layer2 = DMatrix(20, 20) { _, _ in Double.random(in: -1...1) }
-        self.layer3 = DMatrix(3, 20) { _, _ in Double.random(in: -1...1) }
-        
-        super.init()
+    init(
+        layer1: DMatrix = DMatrix(20, 51) { _, _ in Double.random(in: -1...1) },
+        layer2: DMatrix = DMatrix(20, 20) { _, _ in Double.random(in: -1...1) },
+        layer3: DMatrix = DMatrix(3, 20) { _, _ in Double.random(in: -1...1) }
+    ) {
+        self.layer1 = layer1
+        self.layer2 = layer2
+        self.layer3 = layer3
     }
     
-    func mutate() {
-        layer1 = layer1.mutate()
-        layer2 = layer2.mutate()
-        layer3 = layer3.mutate()
+    func mutating() -> MutatablePlayer {
+        return .init(
+            layer1: layer1.mutate(),
+            layer2: layer2.mutate(),
+            layer3: layer3.mutate()
+        )
     }
     
-    override func decision(state: RedactedGameState, ownPlayerId playerId: Int) -> GameMove {
+    func decision(state: RedactedGameState, ownPlayerId playerId: Int) -> GameMove {
         let inputVec = vectorizeState(state: state, playerId: playerId)
         let result = (layer3 * (layer2 * (layer1 * inputVec).fast()).fast()).fast().mapEach(sigmoid)
         
@@ -614,13 +622,10 @@ class MutatablePlayer: PlayerStrategy {
         
         let validMoves = state.validMoves(for: playerId)
         if validMoves.contains(move) {
-            moves.append(move)
             return move
         }
         
         let randomMove = validMoves[Int.random(in: 0..<validMoves.count)]
-        moves.append(randomMove)
-        randomMoves += 1
         return randomMove
     }
     
@@ -630,15 +635,168 @@ class MutatablePlayer: PlayerStrategy {
     }
 }
 
-func main() {
-    let mutablePlayer = MutatablePlayer()
-    let gameLoop = GameLoop(players: [MutatablePlayer(), mutablePlayer, MutatablePlayer(), MutatablePlayer()])
-    let scores = gameLoop.run()
-    print(gameLoop.currentGameState.debugDescription)
-    print("mutablePlayer.randomMoves = " + String(mutablePlayer.randomMoves))
-    print("moves = ")
-    dump(mutablePlayer.moves)
-    print(scores)
+struct ScorablePlayer: Codable {
+    let strategy: MutatablePlayer
+    var accumRoundsTopK: Int
+    var roundsTopK: Int
+    var currentScore: Int
+    
+    var totalTopK: Int {
+        accumRoundsTopK + roundsTopK
+    }
 }
 
-main()
+struct PlayerSample: Codable {
+    var players: [ScorablePlayer]
+}
+
+func fileURL(filename: String) -> URL {
+    FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(filename)
+}
+
+func tryLoadState<S: Decodable>(filename: String) -> S? {
+    let url = fileURL(filename: filename)
+    do {
+        let data = try Data(contentsOf: url)
+        let decoder = JSONDecoder()
+        let object = try decoder.decode(S.self, from: data)
+        return object
+    } catch {
+        debugPrint("Error loading file: \(error)")
+        return nil
+    }
+}
+
+func dumpState<S: Encodable>(filename: String, object: S) {
+    let url = fileURL(filename: filename)
+    do {
+        let data = try JSONEncoder().encode(object)
+        try data.write(to: url)
+    } catch {
+        fatalError("couldnt save file \(error)")
+    }
+}
+
+//func registerSignals(onSignal: @escaping () -> Void) {
+//    signal(SIGINT, SIG_IGN)
+//    signal(SIGTERM, SIG_IGN)
+//    
+//    let sigIntSrc = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+//    sigIntSrc.setEventHandler {
+//        onSignal()
+//        exit(0)
+//    }
+//    
+//    sigIntSrc.resume()
+//    
+//    let sigTermSrc = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+//    sigTermSrc.setEventHandler {
+//        onSignal()
+//        exit(0)
+//    }
+//    
+//    sigTermSrc.resume()
+//}
+
+func main() async {
+    let playerCount = 100
+    let gameCount = 300
+    let parallelGames = playerCount / 4
+    let topK = 20
+    let maxGens = 3
+    
+    var records: [Int] = []
+    
+    var players: [ScorablePlayer] = Array(0..<playerCount).map { _ in
+        .init(strategy: MutatablePlayer(), accumRoundsTopK: 0, roundsTopK: 0, currentScore: 0)
+    }
+//    
+//    registerSignals {
+//        let sample = PlayerSample(players: players)
+//        dumpState(filename: "players.txt", object: sample)
+//        debugPrint("saved players")
+//    }
+//    
+    if let sample: PlayerSample = tryLoadState(filename: "players.txt") {
+        players = sample.players
+        debugPrint("loaded players")
+    }
+    
+    for gen in 0..<maxGens {
+        for game in 0..<gameCount {
+            players = players.shuffled()
+            
+            var tasks: [Task<(Int, [Int: Int]), Never>] = []
+            for parallelGameId in 0..<parallelGames {
+                let startPlayerIndex = 4 * parallelGameId
+                let endPlayerIndex = 4 * (parallelGameId + 1)
+                let playerList = players[startPlayerIndex..<endPlayerIndex].map { $0.strategy }
+                tasks.append(Task {
+                    let gameLoop = GameLoop(players: playerList)
+                    let scores = gameLoop.run()
+                    return (parallelGameId, scores)
+                })
+            }
+            
+            for task in tasks {
+                let (gameId, scores) = await task.value
+                scores.forEach { id, score in
+                    players[4 * gameId + id].currentScore += score
+                }
+            }
+        }
+        
+        let scores = players.map { $0.currentScore }
+        let minimum = scores.min()!
+        let maximum = scores.max()!
+        debugPrint("gen \(gen) current scores of players: \(minimum) - \(maximum)")
+        
+        records.append(players.map { $0.currentScore }.min()!)
+        
+        players = players.sorted { $0.currentScore < $1.currentScore }
+        
+        debugPrint("rounds survived: ")
+        dump(
+            players
+                .sorted { $0.totalTopK < $1.totalTopK }
+                .map { "a = \($0.accumRoundsTopK); b = \($0.roundsTopK)" }
+        )
+        
+        let deletePlayerAmount = playerCount - topK
+        players.popLast(deletePlayerAmount)
+        
+        for i in 0..<players.count {
+            players[i].roundsTopK += 1
+        }
+        
+        for index in players.indices {
+            players[index].currentScore = 0
+        }
+        
+        players += Array(0..<deletePlayerAmount).map { _ in
+            let randomAncestorIndex = Int.random(in: 0..<topK)
+            let ancestor = players[randomAncestorIndex]
+            
+            return .init(
+                strategy: ancestor.strategy.mutating(),
+                accumRoundsTopK: ancestor.totalTopK,
+                roundsTopK: 0,
+                currentScore: 0
+            )
+        }
+    }
+    
+    let sample = PlayerSample(players: players)
+    dumpState(filename: "players.txt", object: sample)
+    debugPrint("saved players")
+    
+    debugPrint("record trace")
+    debugPrint(records)
+}
+
+Task {
+    await main()
+}
+
+while true {}
+//dispatchMain()
