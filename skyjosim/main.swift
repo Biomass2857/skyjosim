@@ -1,5 +1,4 @@
 import Foundation
-import Dispatch
 
 let oneToTwelve: [Int] = [Int](1...12).flatMap { number in return [Int](repeating: number, count: 10) }
 let cards: [Int] = [Int](repeating: -2, count: 5) + [Int](repeating: -1, count: 10) + [Int](repeating: 0, count: 15)
@@ -245,7 +244,7 @@ struct GameState: CustomDebugStringConvertible {
         return (offStack.shuffled(), [])
     }
     
-    func applying(move: GameMove, playerId: Int) -> GameState {
+    func applying(move: GameMove, playerId: Int) -> (GameState, RecordedGameMove) {
         let field = fields[playerId]
         switch move {
         case .reveal(let col, let row):
@@ -257,12 +256,15 @@ struct GameState: CustomDebugStringConvertible {
             
             let newOffStack = offStack + discarded
             
-            return .init(
-                middleCard: newMiddleCard,
-                offStack: newOffStack,
-                stack: stack,
-                fields: tempFields,
-                endsAt: endsAt
+            return (
+                .init(
+                    middleCard: newMiddleCard,
+                    offStack: newOffStack,
+                    stack: stack,
+                    fields: tempFields,
+                    endsAt: endsAt
+                ),
+                .reveal(from: field.fields[col][row])
             )
             
         case .swapMiddle(let col, let row):
@@ -272,12 +274,15 @@ struct GameState: CustomDebugStringConvertible {
             let newMiddleCard = discardedCards.removeLast()
             let newOffStack = offStack + discardedCards
             
-            return .init(
-                middleCard: newMiddleCard,
-                offStack: newOffStack,
-                stack: stack,
-                fields: tempFields,
-                endsAt: endsAt
+            return (
+                .init(
+                    middleCard: newMiddleCard,
+                    offStack: newOffStack,
+                    stack: stack,
+                    fields: tempFields,
+                    endsAt: endsAt
+                ),
+                .swapMiddle(from: field.fields[col][row], to: middleCard)
             )
             
         case .drawTo(let col, let row):
@@ -290,12 +295,15 @@ struct GameState: CustomDebugStringConvertible {
             let newMiddleCard = discarded.removeLast()
             let newOffStack = currentOffStack + [middleCard] + discarded
             
-            return .init(
-                middleCard: newMiddleCard,
-                offStack: newOffStack,
-                stack: currentStack,
-                fields: tempFields,
-                endsAt: endsAt
+            return (
+                .init(
+                    middleCard: newMiddleCard,
+                    offStack: newOffStack,
+                    stack: currentStack,
+                    fields: tempFields,
+                    endsAt: endsAt
+                ),
+                .draw(from: field.fields[col][row], to: drawnCard)
             )
         
         case .end:
@@ -303,12 +311,15 @@ struct GameState: CustomDebugStringConvertible {
                 fatalError("only one can finish")
             }
             
-            return .init(
-                middleCard: middleCard,
-                offStack: offStack,
-                stack: stack,
-                fields: fields,
-                endsAt: playerId
+            return (
+                .init(
+                    middleCard: middleCard,
+                    offStack: offStack,
+                    stack: stack,
+                    fields: fields,
+                    endsAt: playerId
+                ),
+                .end
             )
         }
     }
@@ -402,13 +413,23 @@ extension Array {
     }
 }
 
+enum RecordedGameMove {
+    case reveal(from: FieldState)
+    case swapMiddle(from: FieldState, to: Int)
+    case draw(from: FieldState, to: Int)
+    case end
+}
+
 final class GameLoop {
     var currentGameState: GameState
     let players: [PlayerStrategy]
     var currentPlayer: Int = 0
+    let recordPlayer: Int?
+    var recordedMoves: [Int:[RecordedGameMove]] = [:]
     
-    init(players: [PlayerStrategy]) {
+    init(players: [PlayerStrategy], recordPlayer: Int? = nil) {
         self.players = players
+        self.recordPlayer = recordPlayer
         
         var shuffledCards = cards.shuffled()
         
@@ -457,7 +478,11 @@ final class GameLoop {
         
         let move = strategy.decision(state: currentGameState.redacted(), ownPlayerId: currentPlayer)
         
-        currentGameState = currentGameState.applying(move: move, playerId: currentPlayer)
+        let (nextGameState, recordedMove) = currentGameState.applying(move: move, playerId: currentPlayer)
+        currentGameState = nextGameState
+        if debug {
+            recordedMoves[currentPlayer] = (recordedMoves[currentPlayer] ?? [RecordedGameMove]()) + [recordedMove]
+        }
     }
     
     func run() -> [Int:Int] {
@@ -677,46 +702,21 @@ func dumpState<S: Encodable>(filename: String, object: S) {
     }
 }
 
-//func registerSignals(onSignal: @escaping () -> Void) {
-//    signal(SIGINT, SIG_IGN)
-//    signal(SIGTERM, SIG_IGN)
-//    
-//    let sigIntSrc = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
-//    sigIntSrc.setEventHandler {
-//        onSignal()
-//        exit(0)
-//    }
-//    
-//    sigIntSrc.resume()
-//    
-//    let sigTermSrc = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-//    sigTermSrc.setEventHandler {
-//        onSignal()
-//        exit(0)
-//    }
-//    
-//    sigTermSrc.resume()
-//}
+let debug = true
 
 func main() async {
     let playerCount = 100
-    let gameCount = 300
+    let gameCount = 10
     let parallelGames = playerCount / 4
     let topK = 20
-    let maxGens = 3
+    let maxGens = 30
     
     var records: [Int] = []
     
     var players: [ScorablePlayer] = Array(0..<playerCount).map { _ in
         .init(strategy: MutatablePlayer(), accumRoundsTopK: 0, roundsTopK: 0, currentScore: 0)
     }
-//    
-//    registerSignals {
-//        let sample = PlayerSample(players: players)
-//        dumpState(filename: "players.txt", object: sample)
-//        debugPrint("saved players")
-//    }
-//    
+ 
     if let sample: PlayerSample = tryLoadState(filename: "players.txt") {
         players = sample.players
         debugPrint("loaded players")
@@ -732,8 +732,14 @@ func main() async {
                 let endPlayerIndex = 4 * (parallelGameId + 1)
                 let playerList = players[startPlayerIndex..<endPlayerIndex].map { $0.strategy }
                 tasks.append(Task {
-                    let gameLoop = GameLoop(players: playerList)
+                    let gameLoop = GameLoop(players: playerList, recordPlayer: debug && parallelGameId == 0 ? 0 : nil)
                     let scores = gameLoop.run()
+                    if debug, let bestPlayerId = scores.min(by: { $0.value < $1.value })?.key, parallelGameId == 0 {
+                        debugPrint("moves of best player done: ")
+                        dump(gameLoop.recordedMoves[bestPlayerId])
+                        debugPrint("field: ")
+                        print(gameLoop.currentGameState.fields[bestPlayerId].debugDescription)
+                    }
                     return (parallelGameId, scores)
                 })
             }
@@ -758,14 +764,13 @@ func main() async {
         debugPrint("rounds survived: ")
         dump(
             players
-                .sorted { $0.totalTopK < $1.totalTopK }
-                .map { "a = \($0.accumRoundsTopK); b = \($0.roundsTopK)" }
+                .map { "a = \($0.accumRoundsTopK); b = \($0.roundsTopK); score = \($0.currentScore)" }
         )
         
         let deletePlayerAmount = playerCount - topK
         players.popLast(deletePlayerAmount)
         
-        for i in 0..<players.count {
+        for i in 0..<topK {
             players[i].roundsTopK += 1
         }
         
@@ -792,11 +797,8 @@ func main() async {
     
     debugPrint("record trace")
     debugPrint(records)
+    debugPrint(records.map { Double($0) / Double(gameCount) })
 }
 
-Task {
-    await main()
-}
-
-while true {}
+await main()
 //dispatchMain()
